@@ -1,0 +1,119 @@
+{
+  "settings": {
+    "gender": "Мужчина",
+    "age": 25,
+    "height": 170,
+    "weight": 65.0,
+    "activity": "Сидячий образ жизни (без тренировок)",
+    "goal": "Похудение",
+    "allergens": []
+  },
+  "favorites": {},
+  "ratings": {},
+  "saved_plans": [
+    {
+      "id": "6bb61ffe",
+      "type": "day",
+      "title": "День · 11 Apr 2026, 22:22",
+      "date": "2026-04-11T22:22:21.305305",
+      "total_cal": 1448,
+      "target_cal": 1532,
+      "targets": {
+        "bmi": 20.1,
+        "bmi_cat": "Норма",
+        "bmr": 1502,
+        "tdee": 1803,
+        "tdee_target": 1532,
+        "protein_g": 115,
+        "fat_g": 51,
+        "carbs_g": 153
+      },
+      "meals": [
+        {
+          "slot": {
+            "label": "Завтрак",
+            "icon": "🌅",
+            "fraction": 0.25,
+            "query": "breakfast eggs oatmeal pancakes smoothie"
+          },
+          "recipe": {
+            "id": "1544",
+            "name": "nif s breakfast to go  sandwich  oamc",
+            "calories": 331.5,
+            "protein": 17.5,
+            "fat": 19.5,
+            "carbs": 24.8,
+            "ingredients": "eggs, english muffins, bacon, cheese slices",
+            "steps": "1. there are a few different ways that you can cook the eggs 2. i pierced each yolk , gently stirred each of them and used a plastic egg cooker in the microwave 3. or you can lightly scramble each egg in a cup sprayed with cooking spray 4. or you can lightly scramble each egg in a silicon muffin tin and bake them 5. or you can lightly scramble each egg and cook in a tiny frying pan 6. it's up to you how to cook them ! you basically want them to end up being cooked through and slightly smaller than the size of the english muffin 7. while eggs are cooking , open each english muffin and lay them out 8. when the eggs are done , place each egg on the bottom half of the muffin 9. add bacon to each muffin and top with cheese 10. wrap each breakfast sandwich in plastic wrap 11. i placed the sandwiches in a large resealable bag and put them in the freezer 12. when cooking , placed wrapped sandwich in the microwave 13. microwave on high for 30 to 45 seconds 14. unwrap , turn over and cook on high for another 30 to 45 seconds 15. the cooking time varies on how frozen the sandwich is and the microwave",
+            "description": "i wanted to come up with something for my boys to grab for breakfast when they are rushing to get to the school bus. these turned out really well and froze perfectly. the best part? my kids like them! the instructions are incredibly easy - the first step is long because i give options on how to cook the eggs. enjoy!",
+            "explanation": "С этим блюдом легко снижать вес легко и вкусно. Оно содержит <b>18 г</b> белка при калорийности <b>332 ккал</b> (хорошая порция белка, приятно низкая калорийность). Рецепт безопасен: в нём нет орехи.",
+            "score": 0.3265
+          }
+        },
+        {
+          "slot": {
+            "label": "Перекус",
+            "icon": "🍎",
+            "fraction": 0.1,
+            "query": "snack nuts fruit sandwich yogurt"
+          },
+          "recipe": {
+            "id": "248",
+            "name": "o  j   yogurt shake",
+            "calories": 126.8,
+            "protein": 4.0,
+            "fat": 3.9,
+            "carbs": 16.5,
+            "ingredients": "milk, yogurt, frozen orange juice concentrate, ice cubes",
+            "steps": "1. place the milk , yogurt and orange juice concentrate in a blender 2. process until well blended 3. with blender running , gradually add ice cubes through feed cap 4. process until smooth 5. serve immediately",
+            "description": "this is a yummy and healthy drink that the kids really enjoy!",
+            "explanation": "Мы выбрали этот рецепт, так как он поможет комфортно худеть без чувства голода. В одной порции содержится <b>127 ккал</b> и <b>4 г</b> белка (приятно низкая калорийность). И никаких следов орехи — можно есть спокойно.",
+            "score": 0.3377
+          }
+        },
+        {
+          "slot": {
+            "label": "Обед",
+            "icon": "🍽️",
+            "fraction": 0.35,
+            "query": "lunch hearty meat pasta chicken salad"
+          },
+          "recipe": {
+            "id": "3358",
+            "name": "quick meat sauce and shells",
+            "calories": 535.7,
+            "protein": 34.5,
+            "fat": 17.2,
+            "carbs": 57.8,
+            "ingredients": "lean ground beef, sweet red pepper, green bell pepper, onion, garlic cloves, tomatoes seasoned with basil garlic & oregano, sugar, salt, black pepper, medium pasta shell, part-skim mozzarella cheese",
+            "steps": "1. coat a large nonstick skillet with nonstick cooking spray 2. heat over medium-high heat and add crumbled ground beef , peppers , onion and garlic 3. cook for 8 minutes , stirring occasionally 4. stir in tomatoes , sugar , salt and black pepper 5. cover and simmer on medium-low for 15 minutes , stirring occasionally 6. while sauce is simmering , cook pasta following package directions 7. drain 8. spoon sauce over pasta 9. top with shredded cheese and serve",
+            "description": "this makes a nice and quick weeknight meal. it is high in fiber. the recipe is from family circle.",
+            "explanation": "Отличный выбор, чтобы снижать вес легко и вкусно! Вы получите <b>536 ккал</b> и <b>34 г</b> белка, а также дополнительные плюсы: отличное количество белка, долгие углеводы для энергии. И никаких следов орехи — можно есть спокойно.",
+            "score": 0.1372
+          }
+        },
+        {
+          "slot": {
+            "label": "Ужин",
+            "icon": "🌙",
+            "fraction": 0.3,
+            "query": "dinner fish beef vegetables potato"
+          },
+          "recipe": {
+            "id": "3236",
+            "name": "mediterranean beef and vegetable casserole",
+            "calories": 454.0,
+            "protein": 27.5,
+            "fat": 26.5,
+            "carbs": 33.0,
+            "ingredients": "ground beef, egg, seasoned bread crumbs, salt, dried thyme leaves, ground red pepper, olive oil, onion, whole tomatoes, zucchini, fresh garlic, thyme leaves, white potatoes, fresh parsley",
+            "steps": "1. make the patties: in a large bowl , mix the ground beef , breadcrumbs , salt , thyme and red pepper with your hands or a wooden spoon until well-blended 2. shape the mixture into 8 patties , about 1 / 4-inch thick 3. in a large heavy skillet , heat the oil over medium-high heat 4. add the patties and cook for about 2-3 minutes on each side , or until browned 5. remove with a slotted spoon to a plate 6. reduce the heat to medium-low 7. add the onion to the pan drippings and cook , stirring occasionally , for 5-7 minutes , or until softened 8. increase heat to medium 9. add the tomatoes , zucchini , garlic , salt and thyme 10. stir to mix 11. cover and cook for 10 minutes , or until the zucchini is just tender 12. stir in the potatoes and parsley 13. add the beef or turkey patties and spoon over some of the vegetable mixture 14. cover and simmer for 10 minutes , or until heated through 15. serve right away",
+            "description": "the vegetable mixture in this recipe is a variation of ratatouille, a popular mediterranean dish.  i found it in my woman's day cookbook. it sounded interesting and has become one of my family's favorite recipes -- easy to make and so delicious.",
+            "explanation": "Отличный выбор, чтобы оставаться в дефиците калорий! Вы получите <b>454 ккал</b> и <b>28 г</b> белка, а также дополнительные плюсы: отличное количество белка. Рецепт безопасен: в нём нет орехи.",
+            "score": 0.269
+          }
+        }
+      ]
+    }
+  ]
+}

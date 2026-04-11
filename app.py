@@ -12,6 +12,11 @@ from vector_db import RecipeVectorDB
 from recommender import Recommender
 from nutrition import calculate_user_targets
 from config import ACTIVITY_LEVELS, GOALS, ALLERGEN_KEYWORDS
+from profiles import (
+    list_profiles, load_profile, save_profile, delete_profile,
+    make_day_plan_record, make_week_plan_record,
+)
+from auth import register_user, authenticate
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Page config
@@ -260,13 +265,20 @@ recsys = init_system()
 # Session state
 # ─────────────────────────────────────────────────────────────────────────────
 for _k, _v in {
-    "view":      "none",   # "none" | "day" | "week"
-    "day_plan":  None,
-    "week_plan": None,
-    "regen_seed": 0,
-    "shown_ids": set(),
-    "favorites": {},       # {id: recipe_dict}
-    "ratings":   {},       # {id: 0-5}
+    "view":           "none",
+    "day_plan":       None,
+    "week_plan":      None,
+    "regen_seed":     0,
+    "shown_ids":      set(),
+    "favorites":      {},
+    "ratings":        {},
+    "profile_name":   "",
+    "saved_plans":    [],
+    "_profile_loaded": "",
+    # ── Auth ──
+    "authenticated":  False,
+    "username":       "",
+    "display_name":   "",
 }.items():
     if _k not in st.session_state:
         st.session_state[_k] = _v
@@ -789,12 +801,98 @@ def empty_state_ui(
 
 
 # ═════════════════════════════════════════════════════════════════════════════
+# AUTH GATE — пока не авторизован, показываем экран входа/регистрации
+# ═════════════════════════════════════════════════════════════════════════════
+if not st.session_state.authenticated:
+    _, auth_col, _ = st.columns([1, 2, 1])
+    with auth_col:
+        st.markdown("""
+        <div style="text-align:center;padding:40px 0 28px;">
+            <div style="font-size:2.6em;margin-bottom:8px;">🥗</div>
+            <h1 style="font-size:1.8em;font-weight:800;color:#1A1A1A;
+                       letter-spacing:-.04em;margin:0 0 6px;">NutriRec</h1>
+            <p style="color:#9B9B9B;font-size:.9em;margin:0;">
+                Персональные рекомендации питания
+            </p>
+        </div>""", unsafe_allow_html=True)
+
+        login_tab, reg_tab = st.tabs(["🔑 Войти", "🆕 Регистрация"])
+
+        with login_tab:
+            st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
+            l_user = st.text_input("Логин", placeholder="Ваше имя пользователя", key="l_user")
+            l_pass = st.text_input("Пароль", type="password",
+                                   placeholder="Введите пароль", key="l_pass")
+            st.markdown("<div style='height:4px;'></div>", unsafe_allow_html=True)
+            if st.button("Войти", type="primary",
+                         use_container_width=True, key="btn_login"):
+                if not l_user.strip() or not l_pass:
+                    st.error("Заполните все поля.")
+                else:
+                    ok, dname, err = authenticate(l_user, l_pass)
+                    if ok:
+                        ukey = l_user.strip().lower()
+                        data = load_profile(ukey)
+                        st.session_state.authenticated = True
+                        st.session_state.username      = ukey
+                        st.session_state.display_name  = dname
+                        st.session_state.profile_name  = ukey
+                        st.session_state["_profile_loaded"] = ukey
+                        st.session_state.favorites     = data["favorites"]
+                        st.session_state.ratings       = data["ratings"]
+                        st.session_state.saved_plans   = data["saved_plans"]
+                        st.rerun()
+                    else:
+                        st.error(err)
+
+        with reg_tab:
+            st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
+            r_name = st.text_input("Имя пользователя",
+                                   placeholder="Будет использоваться для входа",
+                                   key="r_user")
+            r_disp = st.text_input("Отображаемое имя (необязательно)",
+                                   placeholder="Например: Анна Петрова",
+                                   key="r_disp")
+            r_pass  = st.text_input("Пароль", type="password",
+                                    placeholder="Минимум 6 символов",
+                                    key="r_pass")
+            r_pass2 = st.text_input("Подтвердите пароль", type="password",
+                                    placeholder="Повторите пароль",
+                                    key="r_pass2")
+            st.markdown("<div style='height:4px;'></div>", unsafe_allow_html=True)
+            if st.button("Зарегистрироваться", type="primary",
+                         use_container_width=True, key="btn_register"):
+                if r_pass != r_pass2:
+                    st.error("Пароли не совпадают.")
+                else:
+                    ok, err = register_user(r_name, r_pass, r_disp)
+                    if ok:
+                        ukey = r_name.strip().lower()
+                        dname = r_disp.strip() or r_name.strip()
+                        data  = load_profile(ukey)
+                        st.session_state.authenticated = True
+                        st.session_state.username      = ukey
+                        st.session_state.display_name  = dname
+                        st.session_state.profile_name  = ukey
+                        st.session_state["_profile_loaded"] = ukey
+                        st.session_state.favorites     = data["favorites"]
+                        st.session_state.ratings       = data["ratings"]
+                        st.session_state.saved_plans   = data["saved_plans"]
+                        st.success(f"Добро пожаловать, {dname}! Вход выполнен.")
+                        st.rerun()
+                    else:
+                        st.error(err)
+
+    st.stop()   # Не отображать главный интерфейс пока не авторизован
+
+
+# ═════════════════════════════════════════════════════════════════════════════
 # SIDEBAR
 # ═════════════════════════════════════════════════════════════════════════════
 with st.sidebar:
     # Brand
     st.markdown("""
-    <div style="padding:10px 0 22px;">
+    <div style="padding:10px 0 18px;">
         <div style="font-size:1.55em;font-weight:800;color:#fff;letter-spacing:-.03em;">
             🥗 NutriRec
         </div>
@@ -802,6 +900,36 @@ with st.sidebar:
             Персональные рекомендации питания
         </div>
     </div>""", unsafe_allow_html=True)
+
+    # ── Пользователь ────────────────────────────────────────────────────────────
+    dname = st.session_state.get("display_name", "") or st.session_state.get("username", "")
+    favs_count  = len(st.session_state.get("favorites", {}))
+    plans_count = len(st.session_state.get("saved_plans", []))
+    st.markdown(
+        f"""<div style="background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.10);
+                    border-radius:10px;padding:12px 14px;margin-bottom:16px;
+                    display:flex;align-items:center;gap:11px;">
+            <div style="background:rgba(255,255,255,.12);border-radius:50%;
+                        width:34px;height:34px;display:flex;align-items:center;
+                        justify-content:center;font-size:1.1em;flex-shrink:0;">👤</div>
+            <div style="flex:1;min-width:0;">
+                <div style="font-weight:700;color:#fff;font-size:.9em;
+                            white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{dname}</div>
+                <div style="font-size:.68em;color:rgba(255,255,255,.38);margin-top:2px;">
+                    {favs_count} ♥ &nbsp;·&nbsp; {plans_count} 🗂</div>
+            </div>
+        </div>""",
+        unsafe_allow_html=True,
+    )
+    if st.button("🚶 Выйти из аккаунта",
+                 use_container_width=True, key="btn_logout"):
+        for _k in ["authenticated", "username", "display_name", "profile_name",
+                   "_profile_loaded", "favorites", "ratings", "saved_plans",
+                   "day_plan", "week_plan", "view", "regen_seed", "shown_ids"]:
+            if _k in st.session_state:
+                del st.session_state[_k]
+        st.rerun()
+    # ── /Пользователь ──────────────────────────────────────────────────────
 
     st.markdown("**Пол**")
     gender = st.radio("Пол", ["Мужчина", "Женщина"],
@@ -882,6 +1010,20 @@ if btn_day:
 if btn_week:
     st.session_state.update(dict(view="week", week_plan=None, regen_seed=0, shown_ids=set()))
 
+# ── Авто-сохранение в профиль ────────────────────────────────────────────────
+def _autosave():
+    pname = st.session_state.get("profile_name", "")
+    if not pname:
+        return
+    data = load_profile(pname)
+    data["favorites"]   = st.session_state.favorites
+    data["ratings"]     = st.session_state.ratings
+    data["saved_plans"] = st.session_state.saved_plans
+    data["settings"]    = user_profile
+    save_profile(pname, data)
+
+_autosave()
+
 
 # ═════════════════════════════════════════════════════════════════════════════
 # MAIN — Header + Metrics
@@ -907,8 +1049,8 @@ st.markdown("<div style='height:10px;'></div>", unsafe_allow_html=True)
 # ═════════════════════════════════════════════════════════════════════════════
 # TABS
 # ═════════════════════════════════════════════════════════════════════════════
-tab_day, tab_week, tab_search, tab_favs = st.tabs(
-    ["📅 День", "🗓️ Неделя", "🔍 Поиск", "❤️ Избранное"]
+tab_day, tab_week, tab_search, tab_favs, tab_cabinet = st.tabs(
+    ["📅 День", "🗓️ Неделя", "🔍 Поиск", "❤️ Избранное", "👤 Кабинет"]
 )
 
 
@@ -960,12 +1102,24 @@ with tab_day:
             render_day_metrics(day_meals, targets, goal)
             render_day(day_meals, tdee=tdee, key_prefix="day")
 
-            if st.button("🔄 Сгенерировать заново", key="regen_day"):
-                for m in day_meals:
-                    st.session_state.shown_ids.add(m["recipe"]["id"])
-                st.session_state.regen_seed += 1
-                st.session_state.day_plan   = None
-                st.rerun()
+            btn_r, btn_s, _ = st.columns([2, 2, 3])
+            with btn_r:
+                if st.button("🔄 Сгенерировать заново", key="regen_day"):
+                    for m in day_meals:
+                        st.session_state.shown_ids.add(m["recipe"]["id"])
+                    st.session_state.regen_seed += 1
+                    st.session_state.day_plan   = None
+                    st.rerun()
+            with btn_s:
+                pname = st.session_state.get("profile_name", "")
+                if pname:
+                    if st.button("💾 Сохранить рацион", key="save_day", type="primary"):
+                        rec = make_day_plan_record(day_meals, targets)
+                        st.session_state.saved_plans.insert(0, rec)
+                        _autosave()
+                        st.success("✅ Рацион сохранён в профиль!")
+                else:
+                    st.caption("🔒 Войдите в профиль чтобы сохранить")
     else:
         if empty_state_ui(
             "📅", "Рацион на день не сформирован",
@@ -1152,6 +1306,17 @@ with tab_week:
             st.session_state.regen_seed += 1
             st.session_state.week_plan   = None
             st.rerun()
+
+        # Кнопка сохранения недельного рациона
+        pname_w = st.session_state.get("profile_name", "")
+        if pname_w:
+            if st.button("💾 Сохранить недельный рацион", key="save_week", type="primary"):
+                rec_w = make_week_plan_record(week_plan, targets)
+                st.session_state.saved_plans.insert(0, rec_w)
+                _autosave()
+                st.success("✅ Недельный рацион сохранён в профиль!")
+        else:
+            st.caption("🔒 Войдите в профиль чтобы сохранить рацион")
     else:
         if empty_state_ui(
             "🗓️", "Рацион на неделю не сформирован",
@@ -1285,3 +1450,183 @@ with tab_favs:
                         meal_fraction=0.33,
                         key_prefix=f"fav_{idx}",
                     )
+
+
+# ══ Tab: Кабинет ─────────────────────────────────────────────────────────────────
+with tab_cabinet:
+    pname_c = st.session_state.get("profile_name", "")
+
+    if not pname_c:
+        # Нет профиля
+        st.markdown("""
+        <div style="text-align:center;padding:60px 20px 40px;">
+            <div style="font-size:3.2em;margin-bottom:14px;">👤</div>
+            <h2 style="font-size:1.2em;font-weight:700;color:#5A5A5A;margin-bottom:8px;">
+                Личный кабинет</h2>
+            <p style="color:#9B9B9B;font-size:.88em;line-height:1.75;
+                      max-width:380px;margin:0 auto;">
+                Выберите или создайте профиль в боковой панели, чтобы
+                сохранять рационы, избранное и оценки между сессиями.
+            </p>
+        </div>""", unsafe_allow_html=True)
+    else:
+        saved = st.session_state.saved_plans
+        favs_c   = st.session_state.favorites
+        ratings_c = st.session_state.ratings
+
+        # ── Заголовок профиля ────────────────────────────────────────────────────────────
+        avg_rating = (
+            sum(ratings_c.values()) / len(ratings_c) if ratings_c else 0
+        )
+        n_day_plans  = sum(1 for p in saved if p["type"] == "day")
+        n_week_plans = sum(1 for p in saved if p["type"] == "week")
+
+        st.markdown(f"""
+        <div style="background:linear-gradient(135deg,#1B3A2D,#2D5540);
+                    border-radius:16px;padding:24px 28px;margin-bottom:20px;
+                    display:flex;align-items:center;gap:22px;">
+            <div style="background:rgba(255,255,255,.1);border-radius:50%;
+                        width:56px;height:56px;display:flex;align-items:center;
+                        justify-content:center;font-size:1.7em;flex-shrink:0;">👤</div>
+            <div>
+                <div style="font-size:1.35em;font-weight:800;color:#fff;
+                            letter-spacing:-.03em;margin-bottom:4px;">{pname_c}</div>
+                <div style="font-size:.80em;color:rgba(255,255,255,.56);">
+                    {len(favs_c)} избранных · {len(saved)} рационов ·
+                    {'★' * round(avg_rating) + '☆' * (5 - round(avg_rating))}
+                    &nbsp;{avg_rating:.1f} ср. оценка
+                </div>
+            </div>
+            <div style="margin-left:auto;display:flex;gap:24px;text-align:center;">
+                <div>
+                    <div style="font-size:1.5em;font-weight:700;color:#fff;">{n_day_plans}</div>
+                    <div style="font-size:.70em;color:rgba(255,255,255,.46);
+                                text-transform:uppercase;letter-spacing:.05em;">Дней</div>
+                </div>
+                <div>
+                    <div style="font-size:1.5em;font-weight:700;color:#fff;">{n_week_plans}</div>
+                    <div style="font-size:.70em;color:rgba(255,255,255,.46);
+                                text-transform:uppercase;letter-spacing:.05em;">Недель</div>
+                </div>
+                <div>
+                    <div style="font-size:1.5em;font-weight:700;color:#fff;">{len(ratings_c)}</div>
+                    <div style="font-size:.70em;color:rgba(255,255,255,.46);
+                                text-transform:uppercase;letter-spacing:.05em;">Оценок</div>
+                </div>
+            </div>
+        </div>""", unsafe_allow_html=True)
+
+        # ── Сохранённые рационы ────────────────────────────────────────────────────────────
+        st.markdown(
+            "<h3 style='font-size:1.05em;font-weight:700;margin:0 0 12px;'>"
+            "🗂️ Сохранённые рационы</h3>", unsafe_allow_html=True
+        )
+
+        if not saved:
+            st.markdown(
+                "<p style='color:#9B9B9B;font-size:.88em;'>"
+                "Нет сохранённых рационов. Нажмите «💾 Сохранить» на вкладке День или Неделя.<br>"
+                "Данные сохраняются между сессиями и рестартами приложения.</p>",
+                unsafe_allow_html=True,
+            )
+        else:
+            for p_idx, plan in enumerate(saved):
+                is_day  = plan["type"] == "day"
+                icon    = "📅" if is_day else "🗓️"
+                tc      = plan.get("total_cal") or plan.get("avg_cal", 0)
+                tgt     = plan.get("target_cal", 0)
+                delta   = tc - tgt
+                ds      = f"{delta:+.0f}"
+                dc      = "#4A8060" if abs(delta) <= 150 else ("#C9923A" if abs(delta) <= 400 else "#B85C38")
+                sub     = f"· {tc:.0f} ккал ({'Δ' + ds if tgt else ''})" if tc else ""
+
+                with st.container(border=True):
+                    hc, ac = st.columns([4, 1])
+                    with hc:
+                        st.markdown(
+                            f"<div style='display:flex;align-items:center;gap:10px;'>"
+                            f"<span style='font-size:1.4em;'>{icon}</span>"
+                            f"<div>"
+                            f"<div style='font-weight:700;font-size:.95em;color:#1A1A1A;'>{plan['title']}</div>"
+                            f"<div style='font-size:.76em;color:#9B9B9B;margin-top:1px;'>"
+                            f"{'Дневной' if is_day else 'Недельный'} рацион &nbsp; "
+                            f"<span style='color:{dc};font-weight:600;'>{sub}</span></div>"
+                            f"</div></div>",
+                            unsafe_allow_html=True,
+                        )
+                    with ac:
+                        if st.button("🗑️", key=f"del_plan_{p_idx}",
+                                     help="Удалить рацион"):
+                            st.session_state.saved_plans.pop(p_idx)
+                            _autosave()
+                            st.rerun()
+
+                    # Развернуть подробности
+                    with st.expander("🔍 Посмотреть состав"):
+                        if is_day:
+                            for m in plan.get("meals", []):
+                                sl = m["slot"]
+                                r  = m["recipe"]
+                                st.markdown(
+                                    f"**{sl['icon']} {sl['label']}** &nbsp; {r['name']} &nbsp; "
+                                    f"*{r['calories']:.0f} ккал*"
+                                )
+                        else:
+                            for day_rec in plan.get("days", []):
+                                dn    = day_rec["day_name"]
+                                dm    = day_rec["meals"]
+                                dcal  = sum(m["recipe"]["calories"] for m in dm)
+                                st.markdown(f"**📆 {dn}** &nbsp; — &nbsp; {dcal:.0f} ккал")
+                                for m in dm:
+                                    sl = m["slot"]
+                                    r  = m["recipe"]
+                                    st.markdown(
+                                        f"&nbsp;&nbsp; {sl['icon']} {sl['label']}: "
+                                        f"{r['name']} *({r['calories']:.0f} ккал)*"
+                                    )
+
+        # ── Лучшие оценки ───────────────────────────────────────────────────────────────
+        if ratings_c:
+            st.markdown(
+                "<h3 style='font-size:1.05em;font-weight:700;margin:20px 0 12px;'>"
+                "⭐ Оценённые рецепты</h3>",
+                unsafe_allow_html=True,
+            )
+            top_rated = sorted(
+                [(rid, r) for rid, r in ratings_c.items() if r >= 4],
+                key=lambda x: -x[1],
+            )
+            if top_rated:
+                for rid, r in top_rated[:6]:
+                    rec_r  = favs_c.get(rid)
+                    name_r = rec_r["name"] if rec_r else f"#{rid}"
+                    stars  = "★" * r
+                    st.markdown(
+                        f"<div style='display:flex;align-items:center;gap:10px;"
+                        f"padding:7px 12px;background:#fff;border:1px solid #E5DFD5;"
+                        f"border-radius:10px;margin-bottom:6px;'>"
+                        f"<span style='color:#C9923A;font-size:1.0em;'>{stars}</span>"
+                        f"<span style='font-size:.88em;color:#1A1A1A;'>{name_r}</span>"
+                        f"</div>",
+                        unsafe_allow_html=True,
+                    )
+            else:
+                st.caption("Оценки 4+ звезды пока не выставлены.")
+
+        # ── Опасная зона: удалить профиль ───────────────────────────────────────────────
+        st.markdown(
+            "<h3 style='font-size:.95em;font-weight:600;color:#9B9B9B;margin:26px 0 10px;'>"
+            "⚙️ Управление профилем</h3>",
+            unsafe_allow_html=True,
+        )
+        with st.expander("🗑️ Удалить профиль «" + pname_c + "»"):
+            st.warning("Это действие нельзя отменить. Все данные профиля будут удалены.")
+            if st.button("Подтвердить удаление", type="primary",
+                         key="confirm_delete_profile"):
+                delete_profile(pname_c)
+                st.session_state["profile_name"]    = ""
+                st.session_state["_profile_loaded"] = ""
+                st.session_state["favorites"]       = {}
+                st.session_state["ratings"]         = {}
+                st.session_state["saved_plans"]     = []
+                st.rerun()
