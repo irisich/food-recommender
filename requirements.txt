@@ -5,5 +5,6 @@ chromadb
 sentence-transformers
 transformers
 torch
-openai
+gigachat
 plotly
+python-dotenv
