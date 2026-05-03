@@ -2,16 +2,16 @@
 Генерация текстовых объяснений «почему рецепт подходит пользователю».
 
 Стратегия:
-  1. Попытка использовать OpenAI (API ключ из config.py).
-  2. Если ключа нет или возникла ошибка сети — fallback на умные шаблоны.
+  1. Попытка использовать GigaChat (Сбер) — бесплатно, работает в России.
+  2. Если ключа нет или возникла ошибка — fallback на умные шаблоны.
 """
 
 import os
-from config import LLM_MODEL_NAME, OPENAI_API_KEY
+from config import LLM_MODEL_NAME, GIGACHAT_API_KEY
 
 
 class LLMExplainer:
-    """Инициализация клиента OpenAI + fallback."""
+    """Инициализация клиента GigaChat + fallback."""
 
     def __init__(self):
         self._client = None
@@ -22,31 +22,34 @@ class LLMExplainer:
     def _load(self):
         if self._loaded or self._failed:
             return
-            
+
         key = ""
         try:
             import streamlit as st
-            key = st.secrets["OPENAI_API_KEY"]
+            key = st.secrets.get("GIGACHAT_API_KEY", "")
         except Exception:
             pass
 
         if not key:
-            import os
-            from config import OPENAI_API_KEY
-            key = OPENAI_API_KEY or os.getenv("OPENAI_API_KEY", "")
+            from config import GIGACHAT_API_KEY
+            key = GIGACHAT_API_KEY or os.getenv("GIGACHAT_API_KEY", "")
 
         if not key:
-            print("[INFO] OpenAI API key not found. Using fallback templates.")
+            print("[INFO] GigaChat API key not found. Using fallback templates.")
             self._failed = True
             return
 
         try:
-            from openai import OpenAI
-            self._client = OpenAI(api_key=key)
+            from gigachat import GigaChat
+            # verify_ssl_certs=False нужен для работы с российскими сертификатами
+            self._client = GigaChat(credentials=key, verify_ssl_certs=False)
             self._loaded = True
-            print("[OK] OpenAI client initialized.")
+            print("[OK] GigaChat client initialized.")
         except ImportError:
-            print("[WARN] 'openai' package not installed. Using fallback templates.")
+            print("[WARN] 'gigachat' package not installed. Run: pip install gigachat")
+            self._failed = True
+        except Exception as e:
+            print(f"[WARN] GigaChat init error: {e}")
             self._failed = True
 
     # ──────────── Основной метод ────────────
@@ -62,7 +65,7 @@ class LLMExplainer:
         target_cals: float,
         target_protein: float,
     ) -> str:
-        """Генерирует объяснение (через OpenAI или шаблон)."""
+        """Генерирует объяснение (через GigaChat или шаблон)."""
         self._load()
 
         if self._loaded and self._client is not None:
@@ -70,19 +73,19 @@ class LLMExplainer:
                 recipe_name, recipe_calories, recipe_protein,
                 user_goal, user_allergens, target_cals, target_protein
             )
-        
+
         return self._template_explanation(
             recipe_name, recipe_calories, recipe_protein,
             recipe_fat, recipe_carbs,
             user_goal, user_allergens, target_cals, target_protein,
         )
 
-    # ──────────── LLM ────────────
+    # ──────────── LLM (GigaChat) ────────────
     def _llm_explanation(
         self, name, cals, prot, goal, allergens, t_cals, t_prot,
     ) -> str:
         allergen_str = ", ".join(allergens) if allergens else "без ограничений"
-        
+
         prompt = (
             f"Ты нейро-диетолог. Коротко (1-2 предложения) объясни, "
             f"почему блюдо '{name}' ({cals:.0f} ккал, {prot:.0f} г белка) "
@@ -92,15 +95,17 @@ class LLMExplainer:
         )
 
         try:
-            response = self._client.chat.completions.create(
-                model=LLM_MODEL_NAME,
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=150,
-                temperature=0.7
+            from gigachat.models import Chat, Messages, MessagesRole
+            response = self._client.chat(
+                Chat(
+                    messages=[Messages(role=MessagesRole.USER, content=prompt)],
+                    temperature=0.7,
+                    max_tokens=150,
+                )
             )
             return response.choices[0].message.content.strip()
         except Exception as e:
-            print(f"[WARN] OpenAI API Error: {e}")
+            print(f"[WARN] GigaChat API Error: {e}")
             return self._template_explanation(
                 name, cals, prot, 0, 0, goal, allergens, t_cals, t_prot,
             )
@@ -115,12 +120,12 @@ class LLMExplainer:
             benefits.append("отличное количество белка")
         elif prot >= 15:
             benefits.append("хорошая порция белка")
-            
+
         if cals <= 350 and goal == "Похудение":
             benefits.append("приятно низкая калорийность")
         elif cals > 600 and goal == "Набор мышечной массы":
             benefits.append("высокая энергетическая ценность")
-            
+
         if carbs >= 50:
             benefits.append("долгие углеводы для энергии")
 
@@ -146,7 +151,7 @@ class LLMExplainer:
                 "зарядить организм энергией для тренировок",
             ],
         }
-        
+
         g_phrase = rng.choice(goal_phrases.get(goal, ["следовать вашему плану"]))
 
         templates = [

@@ -3,6 +3,13 @@
 """
 import os
 
+# Загружаем .env если он есть (локальная разработка)
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass  # python-dotenv не установлен — берём переменные из окружения напрямую
+
 # ────────────────────────────────────────────────
 # Пути
 # ────────────────────────────────────────────────
@@ -15,8 +22,11 @@ CHROMA_DB_PATH = os.path.join(BASE_DIR, "chroma_db")
 # Модели
 # ────────────────────────────────────────────────
 EMBEDDING_MODEL_NAME = "all-MiniLM-L6-v2"          # SentenceTransformers (~80 MB)
-LLM_MODEL_NAME = "gpt-3.5-turbo"                    # OpenAI модель для генерации объяснений
-OPENAI_API_KEY = ""                                 # Вставьте сюда ключ OpenAI перед деплоем
+LLM_MODEL_NAME = "GigaChat"                         # GigaChat от Сбера (бесплатно, работает в России)
+# API ключ берётся из переменной окружения GIGACHAT_API_KEY
+# Локально: создай .env файл и добавь туда GIGACHAT_API_KEY=твой_ключ
+# На хостинге: пропиши в Secrets / Environment Variables
+GIGACHAT_API_KEY = os.environ.get("GIGACHAT_API_KEY", "")
 
 # ────────────────────────────────────────────────
 # Коэффициенты физической активности (TDEE = BMR × A)

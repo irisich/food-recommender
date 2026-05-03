@@ -68,10 +68,44 @@ html, body, .stApp, [class*="css"] { font-family: var(--font) !important; }
 .stApp { background: var(--bg) !important; }
 #MainMenu, footer, header { visibility: hidden; }
 
-/* ── Remove default top padding ── */
-.stApp > header { display: none !important; }
+/* ── Header: transparent, no interference ── */
+#MainMenu { display: none !important; }
+footer    { display: none !important; }
+[data-testid="stToolbar"]        { display: none !important; }
+[data-testid="stMainMenuButton"] { display: none !important; }
+header[data-testid="stHeader"]   { background: transparent !important; }
+
+/* ── Sidebar always expanded ── */
+section[data-testid="stSidebar"] {
+    transform:   none !important;
+    min-width:   15rem !important;
+    width:       15rem !important;
+    display:     flex  !important;
+    opacity:     1     !important;
+    visibility:  visible !important;
+}
+[data-testid="collapsedControl"]   { display: none !important; }
+button[aria-label="Close sidebar"] { display: none !important; }
+button[aria-label="Open sidebar"]  { display: none !important; }
+
+/* ── Red logout button ── */
+div[data-testid="stSidebar"] button[kind="secondary"]:has(+ * + * + *) {
+    background: transparent !important;
+}
+.logout-btn button {
+    background: #C0392B !important;
+    color: #fff !important;
+    border: 1px solid #C0392B !important;
+    font-weight: 700 !important;
+    border-radius: 10px !important;
+}
+.logout-btn button:hover {
+    background: #E74C3C !important;
+    border-color: #E74C3C !important;
+}
+
 section[data-testid="stSidebar"] > div:first-child { padding-top: 1.5rem !important; }
-.stMainBlockContainer, div[data-testid="stMainBlockContainer"] { padding-top: 1.5rem !important; }
+.stMainBlockContainer, div[data-testid="stMainBlockContainer"] { padding-top: 1rem !important; }
 
 /* ── Sidebar ── */
 section[data-testid="stSidebar"],
@@ -251,14 +285,14 @@ STAR_OPTS  = ["☆☆☆☆☆", "★☆☆☆☆", "★★☆☆☆", "★★�
 # System init (cached)
 # ─────────────────────────────────────────────────────────────────────────────
 @st.cache_resource(show_spinner="⏳ Инициализация системы…")
-def init_system():
+def init_system(_version=3):
     df = load_and_clean()
     df = preprocess(df)
     db = RecipeVectorDB()
     db.build_index(df)
     return Recommender(db, df)
 
-recsys = init_system()
+recsys = init_system(_version=3)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -279,6 +313,11 @@ for _k, _v in {
     "authenticated":  False,
     "username":       "",
     "display_name":   "",
+    # ── Navigation ──
+    "page":           "plan",
+    "plan_mode":      "day",
+    "setup_needed":   False,
+    "user_params":    {},
 }.items():
     if _k not in st.session_state:
         st.session_state[_k] = _v
@@ -288,21 +327,56 @@ for _k, _v in {
 # Core: generate one day
 # ─────────────────────────────────────────────────────────────────────────────
 def generate_day(user_profile: dict, used_ids: set, seed: int = 0) -> list[dict]:
-    """Подбирает 4 блюда (завтрак/перекус/обед/ужин)."""
+    """Подбирает 4 блюда (завтрак/перекус/обед/ужин), динамически распределяя остатки КБЖУ."""
     rng   = random.Random(seed)
     meals = []
+    
+    from nutrition import calculate_user_targets
+    targets = calculate_user_targets(
+        user_profile["gender"], user_profile["weight"], user_profile["height"],
+        user_profile["age"], user_profile["activity"], user_profile["goal"],
+    )
+    
+    rem_cals = targets["tdee_target"]
+    rem_prot = targets["protein_g"]
+    rem_fat  = targets["fat_g"]
+    rem_carb = targets["carbs_g"]
+    rem_frac = 1.0
+    
     for slot in MEAL_SLOTS:
+        frac_ratio = slot["fraction"] / rem_frac if rem_frac > 0 else 0
+        override_targets = {
+            "calories": rem_cals * frac_ratio if rem_cals > 0 else slot["fraction"] * targets["tdee_target"],
+            "protein": rem_prot * frac_ratio if rem_prot > 0 else slot["fraction"] * targets["protein_g"],
+            "fat": rem_fat * frac_ratio if rem_fat > 0 else slot["fraction"] * targets["fat_g"],
+            "carbs": rem_carb * frac_ratio if rem_carb > 0 else slot["fraction"] * targets["carbs_g"],
+        }
+        
         cands = recsys.recommend(
             user_profile, slot["query"],
             top_n=20, meal_fraction=slot["fraction"], alpha=0.2,
+            override_targets=override_targets
         )
         fresh  = [c for c in cands if c["id"] not in used_ids]
         pool   = fresh if fresh else cands
         if not pool:
             continue
-        chosen = rng.choice(pool[:min(3, len(pool))])
+        # Чем ближе к концу дня, тем меньше рандома, чтобы точнее попасть в цель
+        if rem_frac <= 0.4:
+            chosen = pool[0] # Ужин/Последний прием пищи берем идеальный
+        else:
+            chosen = rng.choice(pool[:min(3, len(pool))])
+            
         used_ids.add(chosen["id"])
+        
+        rem_cals -= chosen["calories"]
+        rem_prot -= chosen["protein"]
+        rem_fat  -= chosen["fat"]
+        rem_carb -= chosen["carbs"]
+        rem_frac -= slot["fraction"]
+        
         meals.append({"slot": slot, "recipe": chosen})
+        
     return meals
 
 
@@ -516,7 +590,7 @@ def plan_to_text(day_meals: list, targets: dict) -> str:
         "  🥗  NutriRec — Персональный рацион на день",
         dsep,
         "",
-        f"  📊 Ваши цели:",
+        f"  📊 Твои цели:",
         f"     Калории:   {targets['tdee_target']} ккал/день",
         f"     Белки:     {targets['protein_g']} г",
         f"     Жиры:      {targets['fat_g']} г",
@@ -820,14 +894,14 @@ if not st.session_state.authenticated:
 
         with login_tab:
             st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
-            l_user = st.text_input("Логин", placeholder="Ваше имя пользователя", key="l_user")
+            l_user = st.text_input("Логин", placeholder="Твое имя пользователя", key="l_user")
             l_pass = st.text_input("Пароль", type="password",
                                    placeholder="Введите пароль", key="l_pass")
             st.markdown("<div style='height:4px;'></div>", unsafe_allow_html=True)
             if st.button("Войти", type="primary",
                          use_container_width=True, key="btn_login"):
                 if not l_user.strip() or not l_pass:
-                    st.error("Заполните все поля.")
+                    st.error("Заполни все поля.")
                 else:
                     ok, dname, err = authenticate(l_user, l_pass)
                     if ok:
@@ -841,6 +915,7 @@ if not st.session_state.authenticated:
                         st.session_state.favorites     = data["favorites"]
                         st.session_state.ratings       = data["ratings"]
                         st.session_state.saved_plans   = data["saved_plans"]
+                        st.session_state.user_params   = data.get("settings", {})
                         st.rerun()
                     else:
                         st.error(err)
@@ -878,7 +953,8 @@ if not st.session_state.authenticated:
                         st.session_state.favorites     = data["favorites"]
                         st.session_state.ratings       = data["ratings"]
                         st.session_state.saved_plans   = data["saved_plans"]
-                        st.success(f"Добро пожаловать, {dname}! Вход выполнен.")
+                        st.session_state.user_params   = {}
+                        st.session_state.setup_needed  = True
                         st.rerun()
                     else:
                         st.error(err)
@@ -887,10 +963,9 @@ if not st.session_state.authenticated:
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-# SIDEBAR
+# SIDEBAR — лого + пользователь + кнопка выхода
 # ═════════════════════════════════════════════════════════════════════════════
 with st.sidebar:
-    # Brand
     st.markdown("""
     <div style="padding:10px 0 18px;">
         <div style="font-size:1.55em;font-weight:800;color:#fff;letter-spacing:-.03em;">
@@ -901,114 +976,93 @@ with st.sidebar:
         </div>
     </div>""", unsafe_allow_html=True)
 
-    # ── Пользователь ────────────────────────────────────────────────────────────
-    dname = st.session_state.get("display_name", "") or st.session_state.get("username", "")
-    favs_count  = len(st.session_state.get("favorites", {}))
-    plans_count = len(st.session_state.get("saved_plans", []))
+    _dname_sb   = st.session_state.get("display_name", "") or st.session_state.get("username", "")
+    _favs_cnt   = len(st.session_state.get("favorites", {}))
+    _plans_cnt  = len(st.session_state.get("saved_plans", []))
     st.markdown(
         f"""<div style="background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.10);
-                    border-radius:10px;padding:12px 14px;margin-bottom:16px;
+                    border-radius:10px;padding:12px 14px;margin-bottom:12px;
                     display:flex;align-items:center;gap:11px;">
             <div style="background:rgba(255,255,255,.12);border-radius:50%;
                         width:34px;height:34px;display:flex;align-items:center;
                         justify-content:center;font-size:1.1em;flex-shrink:0;">👤</div>
             <div style="flex:1;min-width:0;">
                 <div style="font-weight:700;color:#fff;font-size:.9em;
-                            white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{dname}</div>
+                            white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{_dname_sb}</div>
                 <div style="font-size:.68em;color:rgba(255,255,255,.38);margin-top:2px;">
-                    {favs_count} ♥ &nbsp;·&nbsp; {plans_count} 🗂</div>
+                    {_favs_cnt} ♥ &nbsp;·&nbsp; {_plans_cnt} 🗂</div>
             </div>
         </div>""",
         unsafe_allow_html=True,
     )
-    if st.button("🚶 Выйти из аккаунта",
-                 use_container_width=True, key="btn_logout"):
-        for _k in ["authenticated", "username", "display_name", "profile_name",
-                   "_profile_loaded", "favorites", "ratings", "saved_plans",
-                   "day_plan", "week_plan", "view", "regen_seed", "shown_ids"]:
-            if _k in st.session_state:
-                del st.session_state[_k]
+    # Spacer pushes logout to bottom
+    st.markdown("<div style='height:55vh;'></div>", unsafe_allow_html=True)
+    st.markdown("<div class='logout-btn'>", unsafe_allow_html=True)
+    if st.button("🚪 Выйти из аккаунта", use_container_width=True, key="btn_logout"):
+        for _k in ["authenticated","username","display_name","profile_name",
+                   "_profile_loaded","favorites","ratings","saved_plans",
+                   "day_plan","week_plan","view","regen_seed","shown_ids",
+                   "user_params","setup_needed","page","plan_mode"]:
+            st.session_state.pop(_k, None)
         st.rerun()
-    # ── /Пользователь ──────────────────────────────────────────────────────
-
-    st.markdown("**Пол**")
-    gender = st.radio("Пол", ["Мужчина", "Женщина"],
-                      horizontal=True, label_visibility="collapsed")
-
-    col_a, col_w = st.columns(2)
-    with col_a:
-        age = st.number_input("Возраст", 18, 100, 25)
-    with col_w:
-        weight = st.number_input("Вес (кг)", 40.0, 200.0, 65.0, 0.5)
-
-    for _k, _v in [("_h_slider", 170), ("_h_input", 170)]:
-        if _k not in st.session_state:
-            st.session_state[_k] = _v
-
-    def _on_slider():
-        st.session_state["_h_input"] = st.session_state["_h_slider"]
-
-    def _on_input():
-        v = int(max(140, min(220, st.session_state.get("_h_input", 170))))
-        st.session_state["_h_slider"] = v
-        st.session_state["_h_input"]  = v
-
-    st.markdown("**Рост (см)**")
-    hc1, hc2 = st.columns([3, 1])
-    with hc1:
-        st.slider("", 140, 220, key="_h_slider",
-                  on_change=_on_slider, label_visibility="collapsed")
-    with hc2:
-        st.number_input("", 140, 220, step=1, key="_h_input",
-                        on_change=_on_input, label_visibility="collapsed")
-    height = int(st.session_state["_h_slider"])
-
-    st.markdown("---")
-    st.markdown("**Уровень активности**")
-    activity = st.selectbox("Активность", list(ACTIVITY_LEVELS.keys()),
-                             label_visibility="collapsed")
-    st.markdown("**Цель**")
-    goal = st.selectbox("Цель", list(GOALS.keys()), label_visibility="collapsed")
-
-    st.markdown("---")
-    st.markdown("**Аллергии / ограничения**")
-    allergens = st.multiselect("Аллергии", list(ALLERGEN_KEYWORDS.keys()),
-                                label_visibility="collapsed")
-
-    st.markdown("---")
-
-    # TDEE preview — обновляется в реальном времени
-    targets = calculate_user_targets(gender, weight, height, age, activity, goal)
-    st.markdown(f"""
-    <div style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.09);
-                border-radius:12px;padding:12px 16px;margin-bottom:16px;">
-        <div style="font-size:.66em;color:rgba(255,255,255,.38);text-transform:uppercase;
-                    letter-spacing:.06em;margin-bottom:4px;">Ваша норма</div>
-        <div style="font-size:1.35em;font-weight:700;color:#fff;line-height:1.2;">
-            {targets['tdee_target']} ккал/день
-        </div>
-        <div style="font-size:.70em;color:rgba(255,255,255,.36);margin-top:4px;">
-            ИМТ {targets['bmi']} · {targets['bmi_cat']}&nbsp;&nbsp;
-            Б {targets['protein_g']}г · Ж {targets['fat_g']}г · У {targets['carbs_g']}г
-        </div>
-    </div>""", unsafe_allow_html=True)
-
-    btn_day  = st.button("📅 Рацион на день",    use_container_width=True, type="primary")
-    btn_week = st.button("🗓️ Рацион на неделю", use_container_width=True)
+    st.markdown("</div>", unsafe_allow_html=True)
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-# USER PROFILE + handle sidebar buttons
+# ONBOARDING — появляется после новой регистрации
 # ═════════════════════════════════════════════════════════════════════════════
+if st.session_state.get("setup_needed"):
+    _dname_ob = st.session_state.get("display_name", "") or st.session_state.get("username", "")
+    _, _ob_col, _ = st.columns([1, 2.2, 1])
+    with _ob_col:
+        st.markdown(
+            f"<h2 style='text-align:center;margin:24px 0 4px;font-size:1.6em;font-weight:800;'>"
+            f"🌱 Привет, {_dname_ob}!</h2>"
+            f"<p style='text-align:center;color:#9B9B9B;font-size:.9em;margin:0 0 24px;'>"
+            f"Заполни анкету — это поможет подобрать рацион точнее</p>",
+            unsafe_allow_html=True,
+        )
+        _ob_g  = st.radio("Пол", ["Мужчина", "Женщина"], horizontal=True, key="ob_g")
+        _oc1, _oc2, _oc3 = st.columns(3)
+        with _oc1: _ob_age = st.number_input("Возраст", 18, 100, 25, key="ob_age")
+        with _oc2: _ob_w   = st.number_input("Вес (кг)", 40.0, 200.0, 65.0, 0.5, key="ob_w")
+        with _oc3: _ob_h   = st.number_input("Рост (см)", 140, 220, 170, key="ob_h")
+        _ob_act  = st.selectbox("Уровень активности", list(ACTIVITY_LEVELS.keys()), key="ob_act")
+        _ob_goal = st.selectbox("Цель", list(GOALS.keys()), key="ob_goal")
+        _ob_allerg = st.multiselect("Аллергии / ограничения",
+                                    list(ALLERGEN_KEYWORDS.keys()), key="ob_allerg")
+        st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
+        if st.button("Сохранить и начать →", type="primary",
+                     use_container_width=True, key="ob_save"):
+            _params = dict(gender=_ob_g, age=int(_ob_age), weight=float(_ob_w),
+                           height=int(_ob_h), activity=_ob_act, goal=_ob_goal,
+                           allergens=_ob_allerg)
+            st.session_state.user_params  = _params
+            st.session_state.setup_needed = False
+            pname = st.session_state.get("profile_name", "")
+            if pname:
+                _d = load_profile(pname); _d["settings"] = _params; save_profile(pname, _d)
+            st.rerun()
+    st.stop()
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# USER PARAMS — из session_state (заполняются при онбоардинге или логине)
+# ═════════════════════════════════════════════════════════════════════════════
+_up       = st.session_state.get("user_params") or {}
+gender    = _up.get("gender",   "Мужчина")
+age       = _up.get("age",      25)
+weight    = _up.get("weight",   65.0)
+height    = _up.get("height",   170)
+activity  = _up.get("activity", list(ACTIVITY_LEVELS.keys())[1])
+goal      = _up.get("goal",     list(GOALS.keys())[0])
+allergens = _up.get("allergens", [])
+
 user_profile = dict(
     gender=gender, age=age, height=height, weight=weight,
     activity=activity, goal=goal, allergens=allergens,
 )
-
-if btn_day:
-    st.session_state.update(dict(view="day",  day_plan=None,  regen_seed=0, shown_ids=set()))
-if btn_week:
-    st.session_state.update(dict(view="week", week_plan=None, regen_seed=0, shown_ids=set()))
+targets = calculate_user_targets(gender, weight, height, age, activity, goal)
 
 # ── Авто-сохранение в профиль ────────────────────────────────────────────────
 def _autosave():
@@ -1024,42 +1078,109 @@ def _autosave():
 
 _autosave()
 
+@st.dialog("💾 Сохранение рациона")
+def save_day_dialog(day_meals, targets):
+    name_d = st.text_input("Название плана", placeholder="Мой дневной рацион")
+    if st.button("Сохранить", type="primary", use_container_width=True):
+        rec = make_day_plan_record(day_meals, targets)
+        if name_d.strip():
+            rec["title"] = name_d.strip()
+        st.session_state.saved_plans.insert(0, rec)
+        _autosave()
+        st.toast("✅ Рацион сохранён в профиль!")
+        st.rerun()
+
+@st.dialog("💾 Сохранение недельного рациона")
+def save_week_dialog(week_plan, targets):
+    name_w = st.text_input("Название плана", placeholder="Моя здоровая неделя")
+    if st.button("Сохранить", type="primary", use_container_width=True):
+        rec_w = make_week_plan_record(week_plan, targets)
+        if name_w.strip():
+            rec_w["title"] = name_w.strip()
+        st.session_state.saved_plans.insert(0, rec_w)
+        _autosave()
+        st.toast("✅ Недельный рацион сохранён в профиль!")
+        st.rerun()
+
 
 # ═════════════════════════════════════════════════════════════════════════════
-# MAIN — Header + Metrics
+# TOP NAV BAR
 # ═════════════════════════════════════════════════════════════════════════════
-st.markdown("""
-<h1 style="margin:0 0 4px;font-size:2em;font-weight:800;color:#1A1A1A;letter-spacing:-.04em;">
-    Рекомендации питания
-</h1>
-<p style="color:#9B9B9B;margin:0 0 20px;font-size:.9em;font-weight:400;">
-    Персональный план на основе ваших параметров и целей
-</p>""", unsafe_allow_html=True)
+_NAV = [
+    ("account",   "👤 Мой аккаунт"),
+    ("plan",      "🍽️ Подобрать рацион"),
+    ("search",    "🔍 Найти блюдо"),
+    ("favorites", "❤️ Избранное"),
+]
+cur_page = st.session_state.get("page", "plan")
 
-mc1, mc2, mc3, mc4, mc5 = st.columns(5)
-mc1.metric("ИМТ",          f"{targets['bmi']}  ·  {targets['bmi_cat']}")
-mc2.metric("Калорий/день", f"{targets['tdee_target']} ккал")
-mc3.metric("Белки",        f"{targets['protein_g']} г")
-mc4.metric("Жиры",         f"{targets['fat_g']} г")
-mc5.metric("Углеводы",     f"{targets['carbs_g']} г")
+_nc = st.columns(len(_NAV))
+for _col, (_pid, _lbl) in zip(_nc, _NAV):
+    _t = "primary" if cur_page == _pid else "secondary"
+    if _col.button(_lbl, key=f"nav_{_pid}", use_container_width=True, type=_t):
+        st.session_state.page = _pid
+        st.rerun()
 
-st.markdown("<div style='height:10px;'></div>", unsafe_allow_html=True)
-
-
-# ═════════════════════════════════════════════════════════════════════════════
-# TABS
-# ═════════════════════════════════════════════════════════════════════════════
-tab_day, tab_week, tab_search, tab_favs, tab_cabinet = st.tabs(
-    ["📅 День", "🗓️ Неделя", "🔍 Поиск", "❤️ Избранное", "👤 Кабинет"]
-)
+st.markdown("<hr style='margin:0 0 16px;border-color:#E5DFD5;'>", unsafe_allow_html=True)
 
 
-# ── Tab: День ─────────────────────────────────────────────────────────────────
-with tab_day:
-    if st.session_state.view == "day":
+# ══ Page: Подобрать рацион ════════════════════════════════════════════════════
+if cur_page == "plan":
+    # ── Параметры профиля (редактируемые) ───────────────────────────────────
+    with st.expander("⚙️ Параметры питания — нажми чтобы изменить", expanded=False):
+        _ep = st.session_state.get("user_params") or {}
+        _ec1, _ec2 = st.columns(2)
+        with _ec1:
+            _e_g = st.radio("Пол", ["Мужчина", "Женщина"], horizontal=True,
+                            index=0 if gender == "Мужчина" else 1, key="ep_gender")
+        _ea1, _ea2, _ea3 = st.columns(3)
+        with _ea1: _e_age = st.number_input("Возраст", 18, 100, age, key="ep_age")
+        with _ea2: _e_w   = st.number_input("Вес (кг)", 40.0, 200.0, weight, 0.5, key="ep_w")
+        with _ea3: _e_h   = st.number_input("Рост (см)", 140, 220, height, key="ep_h")
+        _e_act_keys  = list(ACTIVITY_LEVELS.keys())
+        _e_goal_keys = list(GOALS.keys())
+        _e_act  = st.selectbox("Активность", _e_act_keys,
+                               index=_e_act_keys.index(activity) if activity in _e_act_keys else 1,
+                               key="ep_act")
+        _e_goal = st.selectbox("Цель", _e_goal_keys,
+                               index=_e_goal_keys.index(goal) if goal in _e_goal_keys else 0,
+                               key="ep_goal")
+        _e_allerg = st.multiselect("Аллергии / ограничения", list(ALLERGEN_KEYWORDS.keys()),
+                                   default=allergens, key="ep_allerg")
+        if st.button("💾 Сохранить параметры", key="ep_save", type="primary"):
+            _np = dict(gender=_e_g, age=int(_e_age), weight=float(_e_w),
+                       height=int(_e_h), activity=_e_act, goal=_e_goal, allergens=_e_allerg)
+            st.session_state.user_params = _np
+            _pn = st.session_state.get("profile_name", "")
+            if _pn:
+                _dd = load_profile(_pn); _dd["settings"] = _np; save_profile(_pn, _dd)
+            st.success("✅ Параметры сохранены!"); st.rerun()
+
+    # ── Метрики ──────────────────────────────────────────────────────────────
+    mc1, mc2, mc3, mc4, mc5 = st.columns(5)
+    mc1.metric("ИМТ",          f"{targets['bmi']}  ·  {targets['bmi_cat']}")
+    mc2.metric("Калорий/день", f"{targets['tdee_target']} ккал")
+    mc3.metric("Белки",        f"{targets['protein_g']} г")
+    mc4.metric("Жиры",         f"{targets['fat_g']} г")
+    mc5.metric("Углеводы",     f"{targets['carbs_g']} г")
+    st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
+
+    # ── Переключатель День / Неделя ──────────────────────────────────────────
+    _pm = st.columns([1, 1, 4])
+    _pm_mode = st.session_state.get("plan_mode", "day")
+    if _pm[0].button("📅 День",    key="pm_day",  use_container_width=True,
+                     type="primary" if _pm_mode=="day" else "secondary"):
+        st.session_state.plan_mode = "day";  st.rerun()
+    if _pm[1].button("🗓️ Неделя", key="pm_week", use_container_width=True,
+                     type="primary" if _pm_mode=="week" else "secondary"):
+        st.session_state.plan_mode = "week"; st.rerun()
+    st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
+
+    # ── Контент Дня ──────────────────────────────────────────────────────────
+    if st.session_state.plan_mode == "day":
         # Автогенерация если нет готового плана
         if st.session_state.day_plan is None:
-            with st.spinner("Подбираем блюда под ваш профиль…"):
+            with st.spinner("Подбираем блюда под твой профиль…"):
                 wids = st.session_state.shown_ids.copy()
                 st.session_state.day_plan = generate_day(
                     user_profile, wids, seed=st.session_state.regen_seed
@@ -1072,13 +1193,13 @@ with tab_day:
 
         if not day_meals:
             st.warning(
-                "Не удалось подобрать блюда с учётом ваших ограничений. "
-                "Попробуйте уменьшить количество фильтров."
+                "Не удалось подобрать блюда с учётом твоих ограничений. "
+                "Попробуй уменьшить количество фильтров."
             )
         else:
             tdee = targets["tdee_target"]
-            # Заголовок + кнопка скачивания
-            hcol, dlcol = st.columns([3, 1])
+            # Заголовок + кнопки
+            hcol, btn_r_col, dlcol = st.columns([2.2, 1.2, 1])
             with hcol:
                 st.markdown(f"""
                 <h2 style="margin:0 0 3px;font-size:1.2em;">📅 Рацион на день</h2>
@@ -1089,6 +1210,13 @@ with tab_day:
                     Обед ~{round(tdee*.35)} &nbsp;·&nbsp;
                     Ужин ~{round(tdee*.30)}
                 </p>""", unsafe_allow_html=True)
+            with btn_r_col:
+                if st.button("✨ Сгенерировать заново", key="regen_day", use_container_width=True):
+                    for m in day_meals:
+                        st.session_state.shown_ids.add(m["recipe"]["id"])
+                    st.session_state.regen_seed += 1
+                    st.session_state.day_plan   = None
+                    st.rerun()
             with dlcol:
                 st.download_button(
                     label="⬇️ Скачать план",
@@ -1102,39 +1230,17 @@ with tab_day:
             render_day_metrics(day_meals, targets, goal)
             render_day(day_meals, tdee=tdee, key_prefix="day")
 
-            btn_r, btn_s, _ = st.columns([2, 2, 3])
-            with btn_r:
-                if st.button("🔄 Сгенерировать заново", key="regen_day"):
-                    for m in day_meals:
-                        st.session_state.shown_ids.add(m["recipe"]["id"])
-                    st.session_state.regen_seed += 1
-                    st.session_state.day_plan   = None
-                    st.rerun()
-            with btn_s:
-                pname = st.session_state.get("profile_name", "")
-                if pname:
-                    if st.button("💾 Сохранить рацион", key="save_day", type="primary"):
-                        rec = make_day_plan_record(day_meals, targets)
-                        st.session_state.saved_plans.insert(0, rec)
-                        _autosave()
-                        st.success("✅ Рацион сохранён в профиль!")
-                else:
-                    st.caption("🔒 Войдите в профиль чтобы сохранить")
-    else:
-        if empty_state_ui(
-            "📅", "Рацион на день не сформирован",
-            "Заполните профиль в боковой панели и нажмите кнопку ниже, "
-            "чтобы получить персональный план питания на сегодня.",
-            "📅 Сформировать рацион на день", "gen_day_tab",
-        ):
-            st.session_state.update(dict(view="day", day_plan=None,
-                                         regen_seed=0, shown_ids=set()))
-            st.rerun()
+            # Кнопка сохранения выровнена по центру
+            pname = st.session_state.get("profile_name", "")
+            if pname:
+                _, btn_s, _ = st.columns([1, 2, 1])
+                with btn_s:
+                    if st.button("💾 Сохранить рацион", key="save_day", type="primary", use_container_width=True):
+                        save_day_dialog(day_meals, targets)
+            else:
+                st.caption("🔒 Войди в профиль чтобы сохранить")
 
-
-# ── Tab: Неделя ────────────────────────────────────────────────────────────────
-with tab_week:
-    if st.session_state.view == "week":
+    elif st.session_state.plan_mode == "week":
         if st.session_state.week_plan is None:
             prog = st.progress(0, text="Составляем рацион на неделю…")
             used = st.session_state.shown_ids.copy()
@@ -1151,14 +1257,22 @@ with tab_week:
         week_plan = st.session_state.week_plan
         tdee      = targets["tdee_target"]
 
-        # Заголовок + скачать
-        wh_col, wdl_col = st.columns([3, 1])
+        # Заголовок + кнопки
+        wh_col, wbtn_r_col, wdl_col = st.columns([2.2, 1.2, 1])
         with wh_col:
             st.markdown(f"""
             <h2 style="margin:0 0 3px;font-size:1.2em;">🗓️ Рацион на неделю</h2>
             <p style="color:#9B9B9B;margin:0;font-size:.81em;">
                 Блюда не повторяются &nbsp;·&nbsp; Цель {tdee} ккал/день
             </p>""", unsafe_allow_html=True)
+        with wbtn_r_col:
+            if st.button("✨ Сгенерировать заново", key="regen_week", use_container_width=True):
+                for _, dm in week_plan:
+                    for m in dm:
+                        st.session_state.shown_ids.add(m["recipe"]["id"])
+                st.session_state.regen_seed += 1
+                st.session_state.week_plan   = None
+                st.rerun()
         with wdl_col:
             st.download_button(
                 label="⬇️ Скачать план",
@@ -1206,12 +1320,9 @@ with tab_week:
         avg_carb  = sum(c for _, c in day_carbs)  / len(day_carbs)
         total_week_cal = sum(c for _, c in day_cals)
 
-        # дни в норме (±150 ккал от цели — для поддержания; или d≤0/d≥0 для похудения/набора)
+        # дни в норме (строгое попадание в цель: ±25 ккал)
         def day_ok(cal):
-            d = cal - tdee
-            if goal == "Похудение":             return d <= 0
-            elif goal == "Набор мышечной массы": return d >= 0
-            else:                                return abs(d) <= 150
+            return abs(cal - tdee) <= 25
 
         ok_days   = sum(1 for _, c in day_cals if day_ok(c))
         compliance = round(ok_days / len(day_cals) * 100)
@@ -1241,7 +1352,12 @@ with tab_week:
 
         sc1, sc2, sc3, sc4, sc5 = st.columns(5)
         delta_avg = avg_cal - tdee
-        avg_color = "#4A8060" if day_ok(avg_cal) else ("#C9923A" if abs(delta_avg) <= 400 else "#B85C38")
+        if goal == "Похудение":
+            avg_color = "#4A8060" if delta_avg <= 0 else "#B85C38"
+        elif goal == "Набор мышечной массы":
+            avg_color = "#4A8060" if delta_avg >= 0 else "#B85C38"
+        else:
+            avg_color = "#4A8060" if abs(delta_avg) <= 150 else ("#C9923A" if abs(delta_avg) <= 400 else "#B85C38")
 
         sc1.markdown(stat_card(
             "🔥", "Средние калории",
@@ -1299,38 +1415,18 @@ with tab_week:
                 )
                 render_day(day_meals, tdee=tdee, key_prefix=f"week_{day_idx}")
 
-        if st.button("🔄 Сгенерировать заново", key="regen_week"):
-            for _, dm in week_plan:
-                for m in dm:
-                    st.session_state.shown_ids.add(m["recipe"]["id"])
-            st.session_state.regen_seed += 1
-            st.session_state.week_plan   = None
-            st.rerun()
-
         # Кнопка сохранения недельного рациона
         pname_w = st.session_state.get("profile_name", "")
         if pname_w:
-            if st.button("💾 Сохранить недельный рацион", key="save_week", type="primary"):
-                rec_w = make_week_plan_record(week_plan, targets)
-                st.session_state.saved_plans.insert(0, rec_w)
-                _autosave()
-                st.success("✅ Недельный рацион сохранён в профиль!")
+            _, wbtn_s, _ = st.columns([1, 2, 1])
+            with wbtn_s:
+                if st.button("💾 Сохранить недельный рацион", key="save_week", type="primary", use_container_width=True):
+                    save_week_dialog(week_plan, targets)
         else:
-            st.caption("🔒 Войдите в профиль чтобы сохранить рацион")
-    else:
-        if empty_state_ui(
-            "🗓️", "Рацион на неделю не сформирован",
-            "Нажмите кнопку ниже, чтобы получить недельный план питания "
-            "с уникальными блюдами на каждый день.",
-            "🗓️ Сформировать рацион на неделю", "gen_week_tab",
-        ):
-            st.session_state.update(dict(view="week", week_plan=None,
-                                          regen_seed=0, shown_ids=set()))
-            st.rerun()
-
+            st.caption("🔒 Войди в профиль чтобы сохранить рацион")
 
 # ── Tab: Поиск ─────────────────────────────────────────────────────────────────
-with tab_search:
+elif cur_page == "search":
     st.markdown(
         "<h2 style='margin:0 0 14px;font-size:1.2em;'>🔍 Поиск рецептов</h2>",
         unsafe_allow_html=True,
@@ -1369,8 +1465,8 @@ with tab_search:
             results = [r for r in results if cal_min <= r["calories"] <= cal_max]
             if not results:
                 st.info(
-                    "По вашему запросу с учётом фильтров ничего не найдено. "
-                    "Попробуйте расширить диапазон калорий или изменить запрос."
+                    "По твоему запросу с учётом фильтров ничего не найдено. "
+                    "Попробуй расширить диапазон калорий или изменить запрос."
                 )
             else:
                 st.markdown(
@@ -1402,7 +1498,7 @@ with tab_search:
 
 
 # ── Tab: Избранное ─────────────────────────────────────────────────────────────
-with tab_favs:
+elif cur_page == "favorites":
     favs    = st.session_state.favorites
     ratings = st.session_state.ratings
 
@@ -1453,7 +1549,7 @@ with tab_favs:
 
 
 # ══ Tab: Кабинет ─────────────────────────────────────────────────────────────────
-with tab_cabinet:
+elif cur_page == "account":
     pname_c = st.session_state.get("profile_name", "")
 
     if not pname_c:
@@ -1525,7 +1621,7 @@ with tab_cabinet:
         if not saved:
             st.markdown(
                 "<p style='color:#9B9B9B;font-size:.88em;'>"
-                "Нет сохранённых рационов. Нажмите «💾 Сохранить» на вкладке День или Неделя.<br>"
+                "Нет сохранённых рационов. Нажми «💾 Сохранить» на вкладке День или Неделя.<br>"
                 "Данные сохраняются между сессиями и рестартами приложения.</p>",
                 unsafe_allow_html=True,
             )

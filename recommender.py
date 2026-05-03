@@ -31,6 +31,7 @@ class Recommender:
         top_n: int = RESULT_TOP_N,
         meal_fraction: float = MEAL_FRACTION,
         alpha: float = ALPHA_RANKING,
+        override_targets: dict = None,
     ) -> list[dict]:
         """
         Parameters
@@ -76,52 +77,28 @@ class Recommender:
         if not filtered:
             return []
 
-        # 3b. Калорийный фильтр по цели
-        #     Датасет: max ~700 ккал на рецепт. Для высококалорийных норм
-        #     (>700 ккал на приём) жёсткий фильтр невозможен — используем сортировку.
-        goal = user.get("goal", "")
-        meal_cals_preview = targets["tdee_target"] * meal_fraction
-
-        if goal == "Похудение":
-            # Строго меньше целевых ккал приёма
-            goal_filtered = [
-                (rid, meta, dist) for rid, meta, dist in filtered
-                if meta["calories"] < meal_cals_preview
-            ]
-            # Fallback: наименее калорийные из доступных
-            if len(goal_filtered) < 3:
-                goal_filtered = sorted(filtered, key=lambda x: x[1]["calories"])
-
-        elif goal == "Набор мышечной массы":
-            # Строго больше целевых ккал приёма
-            goal_filtered = [
-                (rid, meta, dist) for rid, meta, dist in filtered
-                if meta["calories"] > meal_cals_preview
-            ]
-            # Fallback: наиболее калорийные из доступных
-            if len(goal_filtered) < 3:
-                goal_filtered = sorted(filtered, key=lambda x: x[1]["calories"], reverse=True)
-
+        # 3b. Определение точных целевых КБЖУ для данного приёма пищи
+        # Если передан override_targets (динамический рюкзак), используем его.
+        # Иначе считаем пропорционально meal_fraction.
+        if override_targets:
+            meal_cals = override_targets["calories"]
+            meal_prot = override_targets["protein"]
+            meal_fat  = override_targets["fat"]
+            meal_carb = override_targets["carbs"]
         else:
-            # Поддержание веса — жёсткий фильтр не применяем:
-            # датасет ограничен ~700 ккал, а норма на обед может быть 900+.
-            # Сортируем по близости к цели — penalty-ранжирование уточнит выбор.
-            goal_filtered = sorted(
-                filtered, key=lambda x: abs(x[1]["calories"] - meal_cals_preview)
-            )
+            meal_cals = targets["tdee_target"] * meal_fraction
+            meal_prot = targets["protein_g"]   * meal_fraction
+            meal_fat  = targets["fat_g"]       * meal_fraction
+            meal_carb = targets["carbs_g"]     * meal_fraction
 
-        filtered = goal_filtered
+        # 4. Мягкое Ранжирование: score = alpha·dist + (1-alpha)·penalty  (меньше = лучше)
+        # Мы убрали жёсткую фильтрацию по калориям, чтобы функция _nutrient_penalty 
+        # сама находила рецепт с минимальным отклонением в нужную сторону.
 
-        # 4. Ранжирование: score = alpha·dist + (1-alpha)·penalty  (меньше = лучше)
-        #    meal_fraction задаёт целевую калорийность конкретного приёма пищи
-        meal_cals = meal_cals_preview
-        meal_prot = targets["protein_g"]   * meal_fraction
-        meal_fat  = targets["fat_g"]       * meal_fraction
-        meal_carb = targets["carbs_g"]     * meal_fraction
-
+        goal = user.get("goal", "")
         scored: list[tuple[float, str, dict]] = []
         for rid, meta, dist in filtered:
-            penalty = self._nutrient_penalty(meta, meal_cals, meal_prot, meal_fat, meal_carb)
+            penalty = self._nutrient_penalty(meta, meal_cals, meal_prot, meal_fat, meal_carb, goal)
             score = alpha * dist + (1 - alpha) * penalty
             scored.append((score, rid, meta))
 
@@ -160,13 +137,23 @@ class Recommender:
     #  Функция штрафа за отклонение КБЖУ
     # ══════════════════════════════════════════
     @staticmethod
-    def _nutrient_penalty(meta: dict, t_cal: float, t_pro: float, t_fat: float, t_carb: float) -> float:
+    def _nutrient_penalty(meta: dict, t_cal: float, t_pro: float, t_fat: float, t_carb: float, goal: str = "") -> float:
         """Взвешенная сумма относительных отклонений КБЖУ от целевых на один приём."""
+        actual_cal = meta["calories"]
+
         def rel(actual, target):
             return abs(actual - target) / target if target else 0.0
 
+        cal_penalty = rel(actual_cal, t_cal)
+        
+        # Асимметричный штраф для калорий
+        if goal == "Похудение" and actual_cal > t_cal:
+            cal_penalty *= 5.0  # Жёстко штрафуем перебор
+        elif goal == "Набор мышечной массы" and actual_cal < t_cal:
+            cal_penalty *= 5.0  # Жёстко штрафуем недобор
+
         return (
-            0.4 * rel(meta["calories"], t_cal)
+            0.4 * cal_penalty
             + 0.3 * rel(meta["protein"], t_pro)
             + 0.15 * rel(meta["fat"],     t_fat)
             + 0.15 * rel(meta["carbs"],   t_carb)
