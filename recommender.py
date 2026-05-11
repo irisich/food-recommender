@@ -11,7 +11,7 @@ from vector_db import RecipeVectorDB
 from nutrition import calculate_user_targets
 from llm_explainer import LLMExplainer
 from config import ALPHA_RANKING, MEAL_FRACTION, SEARCH_TOP_K, RESULT_TOP_N
-
+from translator import translate_query_to_english
 
 class Recommender:
     """Основной объект рекомендательной системы."""
@@ -54,7 +54,8 @@ class Recommender:
         )
 
         # 2. Семантический поиск кандидатов
-        raw = self.db.search(query, top_k=SEARCH_TOP_K)
+        search_query = translate_query_to_english(query)
+        raw = self.db.search(search_query, top_k=SEARCH_TOP_K)
         if not raw["ids"] or not raw["ids"][0]:
             return []
 

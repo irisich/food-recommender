@@ -7,7 +7,9 @@ The index is rebuilt once per Streamlit session via @st.cache_resource.
 """
 
 import pandas as pd
+# pyrefly: ignore [missing-import]
 import chromadb
+# pyrefly: ignore [missing-import]
 from chromadb.utils import embedding_functions
 from config import EMBEDDING_MODEL_NAME
 

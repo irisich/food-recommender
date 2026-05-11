@@ -25,6 +25,7 @@ class LLMExplainer:
 
         key = ""
         try:
+            # pyrefly: ignore [missing-import]
             import streamlit as st
             key = st.secrets.get("GIGACHAT_API_KEY", "")
         except Exception:

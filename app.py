@@ -4,8 +4,10 @@ NutriRec — Персональные рекомендации по питани
 UI v2: дизайн-система · tabs · Plotly · избранное · рейтинги · экспорт
 """
 
+# pyrefly: ignore [missing-import]
 import streamlit as st
 import random
+# pyrefly: ignore [missing-import]
 import plotly.graph_objects as go
 from data_processing import load_and_clean, preprocess
 from vector_db import RecipeVectorDB
